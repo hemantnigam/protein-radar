@@ -1,56 +1,118 @@
-# Welcome to your Expo app 👋
+# ⚡ Protein Radar
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+> Real-time high-protein restock monitor, drop siren alerts, and fast checkout assistant.
 
-## Get started
+**Protein Radar** is a high-performance React Native (Expo) mobile application designed to track high-demand, quick-selling protein products (such as High Protein Whey, Protein Lassi, Paneer, Buttermilk) across multiple pincodes in India with zero-latency drop alerts.
 
-1. Install dependencies
+---
 
-   ```bash
-   npm install
-   ```
+## 🚀 Key Features
 
-2. Start the app
+- **⚡ Live Stock Radar**: Real-time stock polling and inventory tracking across configured pincodes.
+- **🚨 High-Priority Drop Sirens**: Fullscreen drop alarm overlay with 8 customizable audio alert sounds.
+- **🔔 Low-Latency Push Notifications**: Instant Firebase Cloud Messaging (FCM) & background fetch synchronization.
+- **🛒 1-Tap Quick Buy**: Quick cart and checkout launch for lightning-fast orders before products sell out.
+- **📊 Restock Analytics & Trends**: Visual charts and historical drop trends to predict upcoming restock windows.
+- **📱 Android Home Screen Widget**: At-a-glance live stock monitor via `react-native-android-widget`.
+- **💳 Micro-Passes & Subscription Tiers**: Seamless pass activation and VIP unlock capabilities.
 
-   ```bash
-   npx expo start
-   ```
+---
 
-In the output, you'll find options to open the app in a
+## 🛠 Tech Stack
 
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
+- **Framework**: [React Native](https://reactnative.dev/) with [Expo SDK 57](https://expo.dev) & [Expo Router](https://docs.expo.dev/router/introduction)
+- **State Management**: [Zustand](https://github.com/pmndrs/zustand)
+- **Backend & Database**: [Supabase](https://supabase.com/) (PostgreSQL, Edge Functions, Cron triggers)
+- **Notifications & Push**: Firebase Cloud Messaging (FCM), `@notifee/react-native`, `expo-notifications`
+- **Audio & Media**: `expo-audio` with custom alarm tones
+- **Widgets**: `react-native-android-widget`
+- **Styling & UI**: Custom Design Tokens, React Native Reanimated, Lucide Icons
 
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
+---
 
-## Get a fresh project
+## 📂 Project Structure
 
-When you're ready, run:
-
-```bash
-npm run reset-project
+```
+protein-radar/
+├── assets/             # Icons, splash screens, and images
+├── plugins/            # Custom Expo config plugins (e.g., manifest tweaks)
+├── scripts/            # Utility scripts (e.g., push notification testing)
+├── src/
+│   ├── app/            # Expo Router file-based routes & tabs
+│   ├── components/     # Reusable UI components & modals
+│   ├── constants/      # App constants, themes, and alarm sound lists
+│   ├── hooks/          # Custom React hooks
+│   ├── music/          # Custom alarm ringtones and alert audio files
+│   ├── services/       # Store API, Supabase, FCM, and Background Sync
+│   ├── store/          # Zustand state stores (Session, Stock, Subscriptions)
+│   └── types/          # TypeScript definitions
+├── supabase/           # Supabase edge functions, schemas, and migrations
+├── app.json            # Expo app configuration
+├── eas.json            # EAS Build & Submit configuration
+└── package.json
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+---
 
-### Other setup steps
+## 🏁 Getting Started
 
-- To set up ESLint for linting, run `npx expo lint`, or follow our guide on ["Using ESLint and Prettier"](https://docs.expo.dev/guides/using-eslint/)
-- If you'd like to set up unit testing, follow our guide on ["Unit Testing with Jest"](https://docs.expo.dev/develop/unit-testing/)
-- Learn more about the TypeScript setup in this template in our guide on ["Using TypeScript"](https://docs.expo.dev/guides/typescript/)
+### 1. Prerequisites
 
-## Learn more
+- **Node.js**: v18 or higher
+- **npm** or **yarn**
+- **Expo CLI** / **EAS CLI**: `npm install -g eas-cli`
+- Android Studio (for Android build/emulator) or Xcode (for iOS simulator)
 
-To learn more about developing your project with Expo, look at the following resources:
+### 2. Installation
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+Clone the repository and install dependencies:
 
-## Join the community
+```bash
+git clone https://github.com/hemantnigam/protein-radar.git
+cd protein-radar
+npm install
+```
 
-Join our community of developers creating universal apps.
+### 3. Environment Variables
 
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+Create a `.env` file in the root directory:
+
+```env
+EXPO_PUBLIC_SUPABASE_URL=your_supabase_project_url
+EXPO_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
+```
+
+Add your `google-services.json` in the root folder for Android Firebase services.
+
+### 4. Running the Development Build
+
+Because this app utilizes native modules (Firebase, Notifee, Android Widgets), generate and run a development build:
+
+```bash
+# Start Metro bundler
+npx expo start
+
+# Run on Android development build
+npx expo run:android
+
+# Run on iOS development build
+npx expo run:ios
+```
+
+---
+
+## ⚙️ Scripts
+
+| Command | Description |
+| :--- | :--- |
+| `npm start` | Start the Expo development server |
+| `npm run android` | Launch on Android device / emulator |
+| `npm run ios` | Launch on iOS simulator |
+| `npm run lint` | Run ESLint checks |
+| `npx eas build` | Build standalone APK / AAB / IPA with EAS Build |
+
+---
+
+## 📄 License
+
+This project is licensed under the [MIT License](LICENSE).
