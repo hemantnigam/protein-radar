@@ -1,7 +1,7 @@
 // @ts-nocheck
 // =========================================================================
 // Supabase Edge Function: amul-radar-cron (Runs in Deno Cloud Runtime)
-// 24/7 Cloud Stock Poller with Upstash Redis Diffing & FCM Siren Dispatcher
+// 24/7 Cloud Stock Poller with PostgreSQL Stock Cache & Parallel FCM Siren Dispatcher
 // =========================================================================
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.49.1';
@@ -15,67 +15,48 @@ interface TrackedRow {
   phone_number?: string;
 }
 
-// 1. Upstash Redis Helper using Fetch REST API
-class UpstashRedis {
-  private url: string;
-  private token: string;
+interface StockCacheRow {
+  pincode: string;
+  product_id: string;
+  product_title?: string;
+  store_id?: string;
+  is_in_stock: boolean;
+  stock_count: number;
+  last_alerted_at?: string | null;
+  updated_at?: string;
+}
 
-  constructor(url: string, token: string) {
-    this.url = (url || '').replace(/\/$/, '');
-    this.token = token || '';
+// 1. Dynamic Category Resolver (Only query categories that are actively tracked)
+function inferCategoryFromProduct(title: string = '', id: string = ''): string {
+  const t = `${title} ${id}`.toLowerCase();
+  if (t.includes('whey') || t.includes('lassi') || t.includes('buttermilk') || t.includes('shake') || t.includes('protein')) {
+    return 'protein';
   }
-
-  async get(key: string): Promise<string | null> {
-    if (!this.url || !this.token) return null;
-    try {
-      const res = await fetch(`${this.url}/get/${encodeURIComponent(key)}`, {
-        headers: { Authorization: `Bearer ${this.token}` },
-      });
-      const data = await res.json();
-      return data.result ?? null;
-    } catch (_e) {
-      return null;
-    }
+  if (t.includes('paneer') || t.includes('curd') || t.includes('dahi') || t.includes('cheese')) {
+    return 'paneer-and-curd';
   }
-
-  async set(key: string, value: string): Promise<boolean> {
-    if (!this.url || !this.token) return false;
-    try {
-      const res = await fetch(`${this.url}/set/${encodeURIComponent(key)}/${encodeURIComponent(value)}`, {
-        headers: { Authorization: `Bearer ${this.token}` },
-      });
-      const data = await res.json();
-      return data.result === 'OK';
-    } catch (_e) {
-      return false;
-    }
+  if (t.includes('ghee')) {
+    return 'ghee';
   }
-
-  async setex(key: string, seconds: number, value: string): Promise<boolean> {
-    if (!this.url || !this.token) return false;
-    try {
-      const res = await fetch(`${this.url}/setex/${encodeURIComponent(key)}/${seconds}/${encodeURIComponent(value)}`, {
-        headers: { Authorization: `Bearer ${this.token}` },
-      });
-      const data = await res.json();
-      return data.result === 'OK';
-    } catch (_e) {
-      return false;
-    }
+  if (t.includes('choco') || t.includes('dark')) {
+    return 'chocolates';
   }
-
-  async del(key: string): Promise<boolean> {
-    if (!this.url || !this.token) return false;
-    try {
-      const res = await fetch(`${this.url}/del/${encodeURIComponent(key)}`, {
-        headers: { Authorization: `Bearer ${this.token}` },
-      });
-      const data = await res.json();
-      return data.result > 0;
-    } catch (_e) {
-      return false;
-    }
+  if (t.includes('mithai') || t.includes('sweet') || t.includes('gulab') || t.includes('rasgulla') || t.includes('peda')) {
+    return 'sweets';
   }
+  if (t.includes('butter') || t.includes('spread')) {
+    return 'butter-and-spreads';
+  }
+  if (t.includes('ice cream') || t.includes('kulfi') || t.includes('cone')) {
+    return 'ice-cream';
+  }
+  if (t.includes('milk') || t.includes('taaza') || t.includes('gold')) {
+    return 'milk';
+  }
+  if (t.includes('beverage') || t.includes('kool') || t.includes('drink')) {
+    return 'beverages';
+  }
+  return 'protein';
 }
 
 // 2. Pure Web Crypto SHA-256 Helper
@@ -253,22 +234,31 @@ async function sendFcmNotification(
     message.topic = target.topic;
   }
 
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ message }),
-  });
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 6000);
 
-  return res.json();
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ message }),
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+    return await res.json();
+  } catch (err) {
+    clearTimeout(timeoutId);
+    return { error: String(err) };
+  }
 }
 
 // 6. Fetch Amul Live Inventory with StoreHippo Authentication Flow
 async function fetchAmulStoreProducts(
   storeId: string,
-  categories: string[] = ['protein', 'beverages', 'ghee', 'bakery', 'chocolates', 'milk', 'sweets', 'ice-cream', 'paneer-and-curd', 'butter-and-spreads']
+  categories: string[] = ['protein']
 ): Promise<{ products: any[]; error?: string }> {
   try {
     const now = Date.now();
@@ -318,7 +308,7 @@ async function fetchAmulStoreProducts(
     const prefSetCookie = prefRes.headers.get('set-cookie');
     if (prefSetCookie) sessionCookie = mergeCookies(sessionCookie, prefSetCookie);
 
-    // Step C: Fetch products across target categories
+    // Step C: Fetch products across target categories dynamically
     const allProducts: any[] = [];
     const seenIds = new Set<string>();
 
@@ -410,8 +400,6 @@ Deno.serve(async (req: Request) => {
   try {
     const supabaseUrl = Deno.env.get('SUPABASE_URL') || '';
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
-    const upstashUrl = Deno.env.get('UPSTASH_REDIS_REST_URL') || '';
-    const upstashToken = Deno.env.get('UPSTASH_REDIS_REST_TOKEN') || '';
     const serviceAccountJson = Deno.env.get('FIREBASE_SERVICE_ACCOUNT_JSON') || '';
 
     if (!supabaseUrl || !supabaseKey) {
@@ -433,7 +421,6 @@ Deno.serve(async (req: Request) => {
     }
 
     const supabase = createClient(supabaseUrl, supabaseKey);
-    const redis = new UpstashRedis(upstashUrl, upstashToken);
 
     let serviceAccount: any = null;
     let fcmAccessToken = '';
@@ -460,21 +447,44 @@ Deno.serve(async (req: Request) => {
 
     // Group subscriptions by store_id
     const storeMap: Record<string, TrackedRow[]> = {};
+    const allPincodes = new Set<string>();
     for (const sub of subs as TrackedRow[]) {
       const sId = sub.store_id || '66505ff5145c16635e6cc74d';
       if (!storeMap[sId]) storeMap[sId] = [];
       storeMap[sId].push(sub);
+      if (sub.pincode) allPincodes.add(sub.pincode);
+    }
+
+    // B. Load previous stock state from PostgreSQL stock_cache table (1 single query)
+    const { data: cachedRows } = await supabase
+      .from('stock_cache')
+      .select('pincode, product_id, is_in_stock, stock_count, last_alerted_at')
+      .in('pincode', Array.from(allPincodes));
+
+    const cacheMap = new Map<string, StockCacheRow>();
+    if (cachedRows) {
+      for (const row of cachedRows) {
+        cacheMap.set(`${row.pincode}:${row.product_id}`, row);
+      }
     }
 
     const alertResults: any[] = [];
     const stockDiagnostics: any[] = [];
+    const cacheRowsToUpsert: StockCacheRow[] = [];
 
-    // B. Scan each substore's inventory
+    // C. Scan each substore's inventory dynamically
     for (const [storeId, items] of Object.entries(storeMap)) {
-      // Fetch live products for standard categories
+      // 1. Determine categories to query dynamically from tracked product titles
+      const categorySet = new Set<string>();
+      for (const item of items) {
+        categorySet.add(inferCategoryFromProduct(item.product_title, item.product_id));
+      }
+      const categoriesToQuery = Array.from(categorySet);
+
+      // 2. Fetch live products for target categories
       const { products: liveProducts, error: fetchErr } = await fetchAmulStoreProducts(
         storeId,
-        ['protein', 'beverages', 'ghee', 'organic', 'chocolates', 'sweets', 'milk']
+        categoriesToQuery
       );
 
       if (fetchErr || liveProducts.length === 0) {
@@ -487,21 +497,18 @@ Deno.serve(async (req: Request) => {
         const isInStock = match.isInStock;
         const stockCount = match.stockCount;
 
-        const stockKey = `amul:stock:${tracked.pincode}:${tracked.product_id}`;
-        const cooldownKey = `amul:cooldown:${tracked.product_id}:${tracked.pincode}`;
+        const cacheKey = `${tracked.pincode}:${tracked.product_id}`;
+        const cached = resetCache ? null : cacheMap.get(cacheKey);
 
-        if (resetCache) {
-          await redis.del(stockKey);
-          await redis.del(cooldownKey);
-        }
+        const wasExplicitlyOutOfStock = cached ? cached.is_in_stock === false : false;
+        const wasInStock = cached ? cached.is_in_stock === true : false;
+        
+        // 5-minute cooldown check (300,000ms)
+        const isCooldown = cached?.last_alerted_at
+          ? Date.now() - new Date(cached.last_alerted_at).getTime() < 300_000
+          : false;
 
-        // Read previous stock state from Upstash Redis
-        const prevStockVal = await redis.get(stockKey);
-        const wasExplicitlyOutOfStock = prevStockVal === '0';
-        const wasInStock = prevStockVal === '1';
-        const isCooldown = Boolean(await redis.get(cooldownKey));
-
-        // If not matched in the current catalog response, do NOT treat as out of stock (preserve previous state)
+        // If not matched in catalog response, preserve previous state
         if (!match.matched) {
           stockDiagnostics.push({
             sku: tracked.product_id,
@@ -530,66 +537,18 @@ Deno.serve(async (req: Request) => {
           isCooldown,
         });
 
-        // Strict True Restock condition:
-        // 1. MUST be: Was previously Out-of-Stock (0), is NOW In-Stock (>0), and NOT in cooldown (300s)
-        // 2. OR explicit test flag (forceAlert) is provided
-        //
-        // Note: If an item was ALREADY in stock and stock drops (e.g. 775 -> 766 -> 50),
-        // wasExplicitlyOutOfStock is FALSE, so NO alert is sent.
-        // If an item is first observed (prevStockVal === null), baseline is set without alerting.
+        // Strict True Restock Condition:
+        // Must be: was explicitly out of stock (0), is now in stock (>0), and not in cooldown (300s)
         const isRealRestock = wasExplicitlyOutOfStock && isInStock && !isCooldown;
         const shouldAlert = isRealRestock || (forceAlert && isInStock);
 
+        let newLastAlertedAt = cached?.last_alerted_at || null;
+
         if (shouldAlert) {
           console.log(`🚨 RESTOCK DETECTED: [${tracked.product_id}] ${tracked.product_title} in Hub ${tracked.pincode} (Qty: ${stockCount})`);
+          newLastAlertedAt = new Date().toISOString();
 
-          // 1. Set 5-minute alert cooldown in Redis (300 seconds)
-          await redis.setex(cooldownKey, 300, '1');
-
-          // 2. Query all active subscribers for this product & pincode
-          const { data: subsList } = await supabase
-            .from('tracked_subscriptions')
-            .select('fcm_token, phone_number')
-            .eq('product_id', tracked.product_id)
-            .eq('pincode', tracked.pincode)
-            .eq('is_active', true);
-
-          const directTokens: string[] = [];
-          const phoneNumbers: string[] = [];
-          if (subsList) {
-            for (const s of subsList) {
-              if (s.fcm_token) directTokens.push(s.fcm_token);
-              if (s.phone_number) phoneNumbers.push(s.phone_number);
-            }
-          }
-
-          // Query active devices linked to these users
-          let userDevices: any[] = [];
-          if (phoneNumbers.length > 0) {
-            const { data: devByPhone } = await supabase
-              .from('devices')
-              .select('fcm_token, selected_sound_id')
-              .in('phone_number', phoneNumbers)
-              .eq('is_active', true);
-            if (devByPhone) userDevices = devByPhone;
-          }
-
-          if (directTokens.length > 0) {
-            const { data: devByToken } = await supabase
-              .from('devices')
-              .select('fcm_token, selected_sound_id')
-              .in('fcm_token', directTokens)
-              .eq('is_active', true);
-            if (devByToken) {
-              for (const d of devByToken) {
-                if (!userDevices.some((ud) => ud.fcm_token === d.fcm_token)) {
-                  userDevices.push(d);
-                }
-              }
-            }
-          }
-
-          // 3. Dispatch FCM Push Notifications (SINGLE DISPATCH per device to avoid duplicate tray notifications)
+          // 1. Prepare FCM Alert Payload
           const alertPayload = {
             title: `⚡ Restock Alert: ${tracked.product_title}`,
             body: `Stock is live for Hub ${tracked.pincode} (${stockCount} units available)! Tap to buy now.`,
@@ -599,32 +558,67 @@ Deno.serve(async (req: Request) => {
           };
 
           let pushSuccessCount = 0;
+
           if (serviceAccount && fcmAccessToken) {
-            if (userDevices.length > 0) {
-              // Send targeted alert to each registered device with its personalized sound
-              for (const dev of userDevices) {
-                if (dev.fcm_token) {
-                  const devSound = dev.selected_sound_id || 'classic_winner';
-                  const fcmRes = await sendFcmNotification(
-                    serviceAccount,
-                    fcmAccessToken,
-                    { token: dev.fcm_token },
-                    { ...alertPayload, soundId: devSound }
+            // STEP A: Instant Topic Broadcast (1 HTTP request notifies 1000s of users in <100ms)
+            const cleanPin = (tracked.pincode || 'all').replace(/[^a-zA-Z0-9_-]/g, '_');
+            const cleanProd = tracked.product_id.replace(/[^a-zA-Z0-9_-]/g, '_');
+            const topic = `restock_${cleanPin}_${cleanProd}`.slice(0, 80);
+
+            const topicRes = await sendFcmNotification(serviceAccount, fcmAccessToken, { topic }, alertPayload);
+            if (topicRes?.name) pushSuccessCount++;
+
+            // STEP B: Parallel Batch for registered devices with custom ringtones (in parallel chunks of 25)
+            const { data: subsList } = await supabase
+              .from('tracked_subscriptions')
+              .select('fcm_token, phone_number')
+              .eq('product_id', tracked.product_id)
+              .eq('pincode', tracked.pincode)
+              .eq('is_active', true);
+
+            const directTokens: string[] = [];
+            const phoneNumbers: string[] = [];
+            if (subsList) {
+              for (const s of subsList) {
+                if (s.fcm_token) directTokens.push(s.fcm_token);
+                if (s.phone_number) phoneNumbers.push(s.phone_number);
+              }
+            }
+
+            if (phoneNumbers.length > 0 || directTokens.length > 0) {
+              const { data: userDevices } = await supabase
+                .from('devices')
+                .select('fcm_token, selected_sound_id')
+                .or(`phone_number.in.(${phoneNumbers.map((p) => `"${p}"`).join(',') || '""'}),fcm_token.in.(${directTokens.map((t) => `"${t}"`).join(',') || '""'})`)
+                .eq('is_active', true);
+
+              if (userDevices && userDevices.length > 0) {
+                // Filter only devices that have a CUSTOM sound (to avoid duplicate with topic default sound)
+                const customSoundDevices = userDevices.filter((d) => d.selected_sound_id && d.selected_sound_id !== 'alert_alarm');
+                
+                // Dispatch custom sounds concurrently in parallel chunks of 25
+                const chunkSize = 25;
+                for (let i = 0; i < customSoundDevices.length; i += chunkSize) {
+                  const chunk = customSoundDevices.slice(i, i + chunkSize);
+                  await Promise.allSettled(
+                    chunk.map(async (dev) => {
+                      if (dev.fcm_token) {
+                        const res = await sendFcmNotification(
+                          serviceAccount,
+                          fcmAccessToken,
+                          { token: dev.fcm_token },
+                          { ...alertPayload, soundId: dev.selected_sound_id }
+                        );
+                        if (res?.name) pushSuccessCount++;
+                      }
+                    })
                   );
-                  if (fcmRes?.name) pushSuccessCount++;
                 }
               }
-            } else {
-              // Fallback to topic ONLY if no direct registered device tokens are found
-              const cleanPin = tracked.pincode.replace(/[^a-zA-Z0-9_-]/g, '_');
-              const cleanProd = tracked.product_id.replace(/[^a-zA-Z0-9_-]/g, '_');
-              const topic = `restock_${cleanPin}_${cleanProd}`.slice(0, 80);
-              await sendFcmNotification(serviceAccount, fcmAccessToken, { topic }, alertPayload);
-              pushSuccessCount++;
             }
           }
 
-          // 4. Log to Supabase restock_events table
+          // 2. Log to Supabase restock_events table
           await supabase.from('restock_events').insert({
             product_id: tracked.product_id,
             product_title: tracked.product_title,
@@ -643,9 +637,25 @@ Deno.serve(async (req: Request) => {
           });
         }
 
-        // Update current stock state in Redis: 1 if in stock, 0 if out of stock
-        await redis.set(stockKey, isInStock ? '1' : '0');
+        // Add to batch cache upsert list
+        cacheRowsToUpsert.push({
+          pincode: tracked.pincode,
+          product_id: tracked.product_id,
+          product_title: tracked.product_title,
+          store_id: storeId,
+          is_in_stock: isInStock,
+          stock_count: stockCount,
+          last_alerted_at: newLastAlertedAt,
+          updated_at: new Date().toISOString(),
+        });
       }
+    }
+
+    // D. Persist all updated stock states into stock_cache (1 single batch upsert)
+    if (cacheRowsToUpsert.length > 0) {
+      await supabase.from('stock_cache').upsert(cacheRowsToUpsert, {
+        onConflict: 'pincode,product_id',
+      });
     }
 
     return new Response(
