@@ -137,7 +137,7 @@ async function main() {
       android: {
         priority: 'high',
         notification: {
-          channel_id: `radar_ch_${soundId}`,
+          channel_id: `radar_siren_v3_${soundId}`,
           sound: soundResName,
           default_sound: false,
           notification_priority: 'PRIORITY_MAX',

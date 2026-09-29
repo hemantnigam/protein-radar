@@ -49,21 +49,22 @@ async function ensureNotificationChannel(soundId: string = 'digital_clock_beep')
   const soundItem: LocalSoundItem =
     LOCAL_ALARM_SOUNDS.find((s) => s.id === soundId) || LOCAL_ALARM_SOUNDS[0];
   const soundResName = soundItem.filename.replace(/\.wav$/i, '');
-  const targetChannelId = `radar_ch_${soundItem.id}`;
-  const channelIds = [targetChannelId, `amul_ch_${soundItem.id}`];
+  const targetChannelId = `radar_siren_v3_${soundItem.id}`;
+  const channelIds = [targetChannelId, `radar_ch_${soundItem.id}`, `amul_ch_${soundItem.id}`];
 
   for (const channelId of channelIds) {
     if (notifeeModule) {
       try {
         await notifeeModule.createChannel({
           id: channelId,
-          name: `Radar: ${soundItem.name}`,
+          name: `Restock Siren: ${soundItem.name}`,
           importance: 4, // AndroidImportance.HIGH
           visibility: 1, // AndroidVisibility.PUBLIC
           sound: soundResName,
           vibration: true,
           vibrationPattern: [300, 500, 300, 500],
           badge: true,
+          bypassDnd: true,
         });
       } catch (err) {
         console.log('⚠️ [Notifee createChannel error]:', err);
@@ -73,13 +74,14 @@ async function ensureNotificationChannel(soundId: string = 'digital_clock_beep')
     if (expoNotifications && expoNotifications.setNotificationChannelAsync) {
       try {
         await expoNotifications.setNotificationChannelAsync(channelId, {
-          name: `Radar: ${soundItem.name}`,
+          name: `Restock Siren: ${soundItem.name}`,
           importance: 5, // AndroidImportance.MAX
           sound: soundResName,
           vibrationPattern: [0, 500, 250, 500],
           lightColor: '#2563EB',
           enableVibrate: true,
           showBadge: true,
+          bypassDnd: true,
         });
       } catch (_e) {}
     }

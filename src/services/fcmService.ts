@@ -2,6 +2,7 @@ import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useStockStore } from '../store/useStockStore';
 import { RestockEvent } from '../types/store';
+import { NotificationService } from './notificationService';
 
 const FCM_TOKEN_STORAGE_KEY = '@amul_fcm_token';
 
@@ -195,7 +196,19 @@ class FCMService {
     // 1. Fire full-screen in-app alarm siren & overlay (Scenario B)
     useStockStore.getState().triggerAlarmEvent(restockEvent);
 
-    // 2. Log to activity logs
+    // 2. Explicitly trigger high-priority notification with sound via NotificationService
+    const chosenSoundId = data.soundId || useStockStore.getState().selectedAlarmSoundId || 'alert_alarm';
+    NotificationService.sendRestockNotification(
+      {
+        title: title,
+        body: notification.body || data.body || `Stock is live for Hub ${pincode}! Tap to buy.`,
+        productId: productId,
+        pincode: pincode,
+      },
+      chosenSoundId
+    ).catch(() => {});
+
+    // 3. Log to activity logs
     useStockStore.getState().addActivityLog({
       type: 'restock',
       title: `Cloud Restock Alert: ${restockEvent.productName}`,
