@@ -209,7 +209,7 @@ async function sendFcmNotification(
     android: {
       priority: 'high',
       notification: {
-        channel_id: `amul_ch_${soundId}`,
+        channel_id: `radar_ch_${soundId}`,
         sound: soundResName,
         default_sound: false,
         notification_priority: 'PRIORITY_MAX',
